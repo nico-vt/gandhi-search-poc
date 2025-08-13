@@ -9,8 +9,10 @@ const BookSearch = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showFullResults, setShowFullResults] = useState(false);
+  const [searchMode, setSearchMode] = useState('general'); // 'general' or 'author'
+  const [hideAuthorBadge, setHideAuthorBadge] = useState(false);
 
-  const searchBooks = async (searchQuery, isQuickSearch = false) => {
+  const searchBooks = async (searchQuery, isQuickSearch = false, mode = searchMode) => {
     if (!searchQuery.trim()) {
       if (isQuickSearch) {
         setQuickResults([]);
@@ -27,6 +29,11 @@ const BookSearch = () => {
     }
     setError('');
 
+    // Define field boosting based on search mode
+    const fields = mode === 'author'
+      ? ['author^4', 'title^2', 'description', 'tags', 'isbn']
+      : ['title^2', 'author^2', 'description', 'tags', 'isbn'];
+
     try {
       const response = await axios.post(
         `${import.meta.env.VITE_ELASTIC_SEARCH_URL}/search-gandhi/_search`,
@@ -34,7 +41,7 @@ const BookSearch = () => {
           query: {
             multi_match: {
               query: searchQuery,
-              fields: ['title^3', 'author^2', 'description', 'tags', 'isbn'],
+              fields: fields,
               type: 'best_fields',
               fuzziness: 'AUTO'
             }
@@ -73,26 +80,66 @@ const BookSearch = () => {
 
   const handleInputChange = (e) => {
     const value = e.target.value;
-    setQuery(value);
-    setShowFullResults(false);
 
-    // Debounce quick search
-    clearTimeout(window.searchTimeout);
-    window.searchTimeout = setTimeout(() => {
-      searchBooks(value, true);
-    }, 300);
+    if (searchMode === 'author') {
+      // In author mode, update the query and search
+      setQuery(value);
+      setShowFullResults(false);
+
+      // Debounce quick search
+      clearTimeout(window.searchTimeout);
+      window.searchTimeout = setTimeout(() => {
+        searchBooks(value, true, 'author');
+      }, 300);
+    } else {
+      // In general mode, normal behavior
+      setQuery(value);
+      setShowFullResults(false);
+      setHideAuthorBadge(false); // Show author badge again when typing
+
+      // Reset search mode to general when typing
+      setSearchMode('general');
+
+      // Debounce quick search
+      clearTimeout(window.searchTimeout);
+      window.searchTimeout = setTimeout(() => {
+        searchBooks(value, true, 'general');
+      }, 300);
+    }
   };
 
   const handleQuickResultClick = (book) => {
-    setQuery(book.title);
-    setQuickResults([]);
-    searchBooks(book.title, false);
+    if (book.url) {
+      window.open(book.url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleAuthorSearchClick = () => {
+    setSearchMode('author');
+    setHideAuthorBadge(true);
+    // Perform author-focused search immediately
+    searchBooks(query, true, 'author');
   };
 
   const handleInputKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      searchBooks(query, false);
+      searchBooks(query, false, searchMode);
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (searchMode === 'author' && e.target.value === '') {
+        // Remove author pill when backspace/delete is pressed on empty input in author mode
+        e.preventDefault();
+        setSearchMode('general');
+        setHideAuthorBadge(false);
+        // Perform general search with the current query
+        searchBooks(query, true, 'general');
+      } else if (e.key === 'Backspace' && query.length === 0 && searchMode === 'general') {
+        // Reset search intent when backspace is pressed on empty input in general mode
+        setSearchMode('general');
+        setQuickResults([]);
+        setShowFullResults(false);
+        setHideAuthorBadge(false);
+      }
     }
   };
 
@@ -116,21 +163,51 @@ const BookSearch = () => {
 
       <form onSubmit={handleSearch} className="search-form">
         <div className="search-input-container">
-          <input
-            type="text"
-            value={query}
-            onChange={handleInputChange}
-            onKeyDown={handleInputKeyDown}
-            placeholder="Buscar por título, autor, ISBN, o descripción..."
-            className="search-input"
-          />
-          <button type="submit" className="search-button" disabled={loading}>
-            {loading ? 'Buscando...' : 'Buscar'}
+          <div className={`search-input-wrapper ${searchMode === 'author' ? 'author-mode' : ''}`}>
+            <div className="search-input-content">
+              {searchMode === 'author' && (
+                <div className="search-pill author-pill">
+                  <span className="pill-label">Autor:</span>
+                  <span className="pill-value">{query}</span>
+                  <button
+                    className="pill-remove-btn"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSearchMode('general');
+                      setHideAuthorBadge(false);
+                      searchBooks(query, true, 'general');
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              <input
+                type="text"
+                value={searchMode === 'author' ? '' : query}
+                disabled={searchMode === 'author' ? true : false}
+                onChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                placeholder={searchMode === 'author' ? '' : "Buscar por título, autor, ISBN, o descripción..."}
+                className={`search-input ${searchMode === 'author' ? 'with-pill' : ''}`}
+              />
+            </div>
+          </div>
+          <button type="submit" className={`search-button ${searchMode === 'author' ? 'author-mode' : ''}`} disabled={loading}>
+            {loading ? 'Buscando...' : searchMode === 'author' ? 'Buscar' : 'Buscar'}
           </button>
 
           {/* Quick results dropdown */}
           {quickResults.length > 0 && !showFullResults && (
             <div className="quick-results">
+              {/* Author search badge */}
+              {!hideAuthorBadge && (
+                <div className="author-search-badge" onClick={handleAuthorSearchClick}>
+                  Buscar por autor: "{query}"
+                </div>
+              )}
+
               {quickResults.map((book, index) => (
                 <div
                   key={book.skuId || index}
