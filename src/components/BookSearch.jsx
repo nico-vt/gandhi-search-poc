@@ -69,7 +69,7 @@ const BookSearch = () => {
         setFullResults(results);
         setShowFullResults(true);
         // Fetch prices for full results
-        //fetchPrices(results);
+        fetchPrices(results);
         // Fetch suggestions for the search query, excluding already found results
         fetchSuggestions(searchQuery, results);
       }
@@ -260,7 +260,7 @@ const BookSearch = () => {
       setSuggestions(deduplicatedResults);
 
       // Fetch prices for suggestions
-      // fetchPrices(suggestionResults);
+      fetchPrices(suggestionResults);
     } catch (err) {
       console.error('Error fetching suggestions:', err);
       setSuggestions([]);
@@ -277,25 +277,30 @@ const BookSearch = () => {
       const skuIds = items.map(item => {
         // Extract SKU ID from URL if available, or use ISBN as fallback
         const urlMatch = item.url?.match(/\/p\/(\d+)/);
-        return urlMatch ? urlMatch[1] : item.isbn;
+        return urlMatch ? urlMatch[1] : item.skuId;
       }).filter(Boolean);
 
       if (skuIds.length === 0) return;
+      //`${import.meta.env.VITE_VTEX_API_URL}/api/catalog_system/pub/products/search?_from=1&_to=10&O=OrderByPriceASC&fq=skuId:(${skuIds.join(' OR ')})`,
 
+      const params = new URLSearchParams({});
+      skuIds.forEach(id => params.append('fq', `skuId:${id}`));
       const response = await axios.get(
-        `${import.meta.env.VITE_VTEX_API_URL}/api/catalog_system/pub/products/search?fq=skuId:(${skuIds.join(' OR ')})`,
+        `${import.meta.env.VITE_VTEX_API_URL}/catalog_system/pub/products/search/?${params.toString()}`,
         {
           headers: {
             'X-VTEX-API-AppKey': import.meta.env.VITE_VTEX_API_KEY,
             'X-VTEX-API-AppToken': import.meta.env.VITE_VTEX_API_TOKEN,
             'Content-Type': 'application/json'
-          }
+          },
+          maxRedirects: 0,
+          validateStatus: s => s < 400 || s === 302,
         }
       );
       console.log('Prices', response);
       // Create a map of SKU ID to price
       const priceMap = {};
-      response.data.forEach(product => {
+      response.data?.forEach(product => {
         product.items?.forEach(item => {
           if (item.sellers && item.sellers.length > 0) {
             const seller = item.sellers[0];
