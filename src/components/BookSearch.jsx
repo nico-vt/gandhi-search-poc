@@ -12,6 +12,9 @@ const BookSearch = () => {
   const [searchMode, setSearchMode] = useState('general'); // 'general' or 'author'
   const [hideAuthorBadge, setHideAuthorBadge] = useState(false);
   const [prices, setPrices] = useState({});
+  const [sellingPrices, setSellingPrices] = useState({});
+  const [pricesSuggestions, setPricesSuggestions] = useState({});
+  const [sellingPricesSuggestions, setSellingPricesSuggestions] = useState({});
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -51,7 +54,7 @@ const BookSearch = () => {
             }
           },
           size: isQuickSearch ? 5 : 20,
-          _source: ['title', 'author', 'description', 'image', 'url', 'isbn', 'publisher', 'language', 'type', 'releaseDate']
+          _source: ['title', 'author', 'description', 'image', 'url', 'isbn', 'publisher', 'language', 'type', 'releaseDate', 'skuId']
         },
         {
           headers: {
@@ -69,7 +72,7 @@ const BookSearch = () => {
         setFullResults(results);
         setShowFullResults(true);
         // Fetch prices for full results
-        fetchPrices(results);
+        fetchPrices(results, false);
         // Fetch suggestions for the search query, excluding already found results
         fetchSuggestions(searchQuery, results);
       }
@@ -260,7 +263,7 @@ const BookSearch = () => {
       setSuggestions(deduplicatedResults);
 
       // Fetch prices for suggestions
-      fetchPrices(suggestionResults);
+      fetchPrices(suggestionResults, true);
     } catch (err) {
       console.error('Error fetching suggestions:', err);
       setSuggestions([]);
@@ -269,7 +272,7 @@ const BookSearch = () => {
     }
   };
 
-  const fetchPrices = async (items) => {
+  const fetchPrices = async (items, isSuggestions = false) => {
     if (!items || items.length === 0) return;
 
     try {
@@ -286,7 +289,7 @@ const BookSearch = () => {
       const params = new URLSearchParams({});
       skuIds.forEach(id => params.append('fq', `skuId:${id}`));
       const response = await axios.get(
-        `${import.meta.env.VITE_VTEX_API_URL}/catalog_system/pub/products/search/?${params.toString()}`,
+        `${import.meta.env.VITE_SERVER_API_URL}/gandhi/prices?ids=${skuIds.join(',')}`,
         {
           headers: {
             'X-VTEX-API-AppKey': import.meta.env.VITE_VTEX_API_KEY,
@@ -297,22 +300,29 @@ const BookSearch = () => {
           validateStatus: s => s < 400 || s === 302,
         }
       );
-      console.log('Prices', response);
+
       // Create a map of SKU ID to price
       const priceMap = {};
-      response.data?.forEach(product => {
-        product.items?.forEach(item => {
-          if (item.sellers && item.sellers.length > 0) {
-            const seller = item.sellers[0];
-            const price = seller.commertialOffer?.Price;
-            if (price !== undefined) {
-              priceMap[item.itemId] = price;
-            }
-          }
-        });
+      const sellingPriceMap = {};
+      const prices = response.data?.prices || {};
+
+      Object.entries(prices).forEach(([sku, item]) => {
+        // console.log('sku', sku, 'item', item);
+        if (item.listPrice !== undefined) {
+          priceMap[sku] = item.listPrice;
+        }
+        if (item.sellingPrice !== undefined) {
+          sellingPriceMap[sku] = item.sellingPrice;
+        }
       });
 
-      setPrices(priceMap);
+      if (isSuggestions) {
+        setPricesSuggestions(priceMap);
+        setSellingPricesSuggestions(sellingPriceMap);
+      } else {
+        setPrices(priceMap);
+        setSellingPrices(sellingPriceMap);
+      }
     } catch (err) {
       console.error('Error fetching prices:', err);
     }
@@ -537,6 +547,27 @@ const BookSearch = () => {
                   {book.isbn && (
                     <p className="book-isbn">ISBN: {book.isbn}</p>
                   )}
+                  {/* Price display */}
+                  {(() => {
+                    const skuId = book.skuId || book.url?.match(/\/p\/(\d+)/)?.[1] || book.isbn;
+                    const listPrice = prices[skuId];
+                    const sellingPrice = sellingPrices[skuId];
+
+                    if (!listPrice) return null;
+
+                    if (listPrice !== sellingPrice) {
+                      return (
+                        <div className="book-price-container">
+                          <span className="book-price-original">${listPrice.toFixed(2)}</span>
+                          <span className="book-price-selling">${sellingPrice.toFixed(2)}</span>
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <p className="book-price">${listPrice.toFixed(2)}</p>
+                      );
+                    }
+                  })()}
                   {book.url && (
                     <a
                       href={book.url}
@@ -547,14 +578,6 @@ const BookSearch = () => {
                       Ver en Gandhi
                     </a>
                   )}
-                  {/* Price display */}
-                  {(() => {
-                    const skuId = book.url?.match(/\/p\/(\d+)/)?.[1] || book.isbn;
-                    const price = prices[skuId];
-                    return price ? (
-                      <p className="book-price">${price.toFixed(2)}</p>
-                    ) : null;
-                  })()}
                 </div>
               </div>
             ))}
@@ -569,7 +592,7 @@ const BookSearch = () => {
       )}
 
       {/* You may also like suggestions */}
-      {suggestions.length > 0 && (
+      {(suggestions.length > 0 || suggestionsLoading) && (
         <div className="suggestions-section">
           <h2 className="suggestions-title">También te puede interesar</h2>
           {suggestionsLoading ? (
@@ -604,6 +627,27 @@ const BookSearch = () => {
                       <div className="suggestion-info">
                         <h4 className="suggestion-title">{book.title}</h4>
                         <p className="suggestion-author">{book.author}</p>
+                        {/* Price display for suggestions */}
+                        {(() => {
+                          const skuId = book.skuId || book.url?.match(/\/p\/(\d+)/)?.[1] || book.isbn;
+                          const listPrice = pricesSuggestions[skuId];
+                          const sellingPrice = sellingPricesSuggestions[skuId];
+
+                          if (!listPrice) return null;
+
+                          if (listPrice !== sellingPrice) {
+                            return (
+                              <div className="book-price-container">
+                                <span className="book-price-original">${listPrice.toFixed(2)}</span>
+                                <span className="book-price-selling">${sellingPrice.toFixed(2)}</span>
+                              </div>
+                            );
+                          } else {
+                            return (
+                              <p className="book-price">${listPrice.toFixed(2)}</p>
+                            );
+                          }
+                        })()}
                         {book.url && (
                           <a
                             href={book.url}
@@ -614,14 +658,6 @@ const BookSearch = () => {
                             Ver en Gandhi
                           </a>
                         )}
-                        {/* Price display for suggestions */}
-                        {(() => {
-                          const skuId = book.url?.match(/\/p\/(\d+)/)?.[1] || book.isbn;
-                          const price = prices[skuId];
-                          return price ? (
-                            <p className="suggestion-price">${price.toFixed(2)}</p>
-                          ) : null;
-                        })()}
                       </div>
                     </div>
                   ))}
