@@ -369,7 +369,7 @@ const BookSearch = () => {
     return tmp.textContent || tmp.innerText || '';
   };
 
-  const truncateText = (text, maxLength = 200) => {
+  const truncateText = (text, maxLength = 150) => {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength) + '...';
   };
@@ -544,9 +544,9 @@ const BookSearch = () => {
                       {truncateText(stripHtml(book.description.substring(book.description.indexOf('_') + 1)))}
                     </p>
                   )}
-                  {book.isbn && (
+                  {/* {book.isbn && (
                     <p className="book-isbn">ISBN: {book.isbn}</p>
-                  )}
+                  )} */}
                   {/* Price display */}
                   {(() => {
                     const skuId = book.skuId || book.url?.match(/\/p\/(\d+)/)?.[1] || book.isbn;
